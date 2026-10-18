@@ -7,7 +7,7 @@
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #f0f2f5;
+      background: #f0f2f5;
       margin: 0;
       padding: 20px;
       display: flex;
@@ -24,27 +24,15 @@
       width: 100%;
       max-width: 340px;
     }
-    h1 {
-      font-size: 20px;
-      margin: 0 0 6px 0;
-      color: #333;
-    }
-    .datetime {
-      font-size: 14px;
-      color: #888;
-      margin-bottom: 25px;
-    }
+    h1 { font-size: 20px; margin: 0 0 8px 0; color: #333; }
+    .datetime { font-size: 14px; color: #888; margin-bottom: 25px; }
     .circle-container {
       position: relative;
       width: 180px;
       height: 180px;
-      margin: 0 auto 20px;
+      margin: 0 auto 18px;
     }
-    .circle-bg {
-      fill: none;
-      stroke: #eee;
-      stroke-width: 12;
-    }
+    .circle-bg { fill: none; stroke: #eeeeee; stroke-width: 12; }
     .circle-progress {
       fill: none;
       stroke-width: 12;
@@ -62,18 +50,13 @@
       transform: translate(-50%, -50%);
       font-size: 36px;
       font-weight: bold;
+      color: #333;
     }
-    .status {
-      font-size: 15px;
-      margin-top: 8px;
-    }
+    .status { font-size: 15px; margin-top: 6px; }
     .status.ok { color: #2e7d32; }
     .status.low { color: #d32f2f; font-weight: bold; }
-    .update-time {
-      margin-top: 18px;
-      font-size: 12px;
-      color: #aaa;
-    }
+    .update-time { margin-top: 16px; font-size: 12px; color: #aaa; }
+    .debug { margin-top: 10px; font-size: 11px; color: #999; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -84,60 +67,50 @@
     <div class="circle-container">
       <svg width="180" height="180" viewBox="0 0 180 180">
         <circle class="circle-bg" cx="90" cy="90" r="80"></circle>
-        <circle id="progressCircle" class="circle-progress normal" cx="90" cy="90" r="80"
-                stroke-dasharray="502.4" stroke-dashoffset="502.4"></circle>
+        <circle id="progressCircle" class="circle-progress normal" 
+                cx="90" cy="90" r="80"
+                stroke-dasharray="502.4" 
+                stroke-dashoffset="502.4"></circle>
       </svg>
       <div id="percentText" class="percent-text">--%</div>
     </div>
 
     <div id="statusText" class="status">正在載入...</div>
     <div id="updateTime" class="update-time"></div>
+    <div id="debug" class="debug"></div>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+  <!-- 使用 compat 版本，對 iPhone 較穩定 -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
+  <script>
     const firebaseConfig = {
       databaseURL: "https://toiletpapermonitor-1e20f-default-rtdb.asia-southeast1.firebasedatabase.app"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const database = getDatabase(app);
-    const paperRef = ref(database, 'device/paper_level');
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+    const paperRef = database.ref('device/paper_level');
 
-    // 圓周長 (2 * π * r) = 2 * 3.1416 * 80 ≈ 502.4
     const circumference = 502.4;
-    let lastLevel = null;
-    let notificationPermission = Notification.permission;
 
-    // 請求通知權限
-    if (notificationPermission === "default") {
-      Notification.requestPermission().then(permission => {
-        notificationPermission = permission;
-      });
-    }
-
-    // 更新而家時間
     function updateDateTime() {
       const now = new Date();
-      const options = { 
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false 
-      };
-      document.getElementById('datetime').textContent = now.toLocaleString('zh-HK', options);
+      document.getElementById('datetime').textContent = now.toLocaleString('zh-HK', { hour12: false });
     }
     updateDateTime();
     setInterval(updateDateTime, 1000);
 
-    // 監聽紙量
-    onValue(paperRef, (snapshot) => {
+    paperRef.on('value', (snapshot) => {
       const level = snapshot.val();
       const progressCircle = document.getElementById('progressCircle');
       const percentText = document.getElementById('percentText');
       const statusText = document.getElementById('statusText');
       const updateTime = document.getElementById('updateTime');
+      const debug = document.getElementById('debug');
+
+      debug.textContent = "讀取到: " + level;
 
       if (level === null || level === undefined) {
         percentText.textContent = "--%";
@@ -145,27 +118,15 @@
         return;
       }
 
-      // 更新圓形進度
       const offset = circumference - (level / 100) * circumference;
       progressCircle.style.strokeDashoffset = offset;
-
-      // 更新文字
       percentText.textContent = level + "%";
 
-      // 低於 20% 變紅色 + 通知
       if (level < 20) {
         progressCircle.classList.remove('normal');
         progressCircle.classList.add('warning');
         statusText.className = "status low";
         statusText.textContent = "⚠ 紙量不足，請盡快更換";
-
-        // 只在從高於20%變成低於20%時通知一次
-        if (lastLevel !== null && lastLevel >= 20 && notificationPermission === "granted") {
-          new Notification("廁紙警告", {
-            body: `剩餘紙量只剩 ${level}%，請盡快更換！`,
-            icon: "https://cdn-icons-png.flaticon.com/512/2921/2921226.png"
-          });
-        }
       } else {
         progressCircle.classList.remove('warning');
         progressCircle.classList.add('normal');
@@ -173,11 +134,9 @@
         statusText.textContent = "紙量正常";
       }
 
-      lastLevel = level;
-
-      // 更新時間
-      const now = new Date();
-      updateTime.textContent = "最後更新：" + now.toLocaleTimeString('zh-HK');
+      updateTime.textContent = "最後更新：" + new Date().toLocaleTimeString('zh-HK');
+    }, (error) => {
+      document.getElementById('debug').textContent = "錯誤: " + error.message;
     });
   </script>
 </body>
