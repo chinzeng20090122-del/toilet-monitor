@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>廁紙監控</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #f0f2f5;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 30px 20px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+      text-align: center;
+      width: 100%;
+      max-width: 340px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 6px 0;
+      color: #333;
+    }
+    .datetime {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 25px;
+    }
+    .circle-container {
+      position: relative;
+      width: 180px;
+      height: 180px;
+      margin: 0 auto 20px;
+    }
+    .circle-bg {
+      fill: none;
+      stroke: #eee;
+      stroke-width: 12;
+    }
+    .circle-progress {
+      fill: none;
+      stroke-width: 12;
+      stroke-linecap: round;
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+      transition: stroke-dashoffset 0.6s ease, stroke 0.3s;
+    }
+    .normal { stroke: #2e7d32; }
+    .warning { stroke: #d32f2f; }
+    .percent-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 36px;
+      font-weight: bold;
+    }
+    .status {
+      font-size: 15px;
+      margin-top: 8px;
+    }
+    .status.ok { color: #2e7d32; }
+    .status.low { color: #d32f2f; font-weight: bold; }
+    .update-time {
+      margin-top: 18px;
+      font-size: 12px;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>廁紙剩餘量</h1>
+    <div id="datetime" class="datetime">--</div>
+
+    <div class="circle-container">
+      <svg width="180" height="180" viewBox="0 0 180 180">
+        <circle class="circle-bg" cx="90" cy="90" r="80"></circle>
+        <circle id="progressCircle" class="circle-progress normal" cx="90" cy="90" r="80"
+                stroke-dasharray="502.4" stroke-dashoffset="502.4"></circle>
+      </svg>
+      <div id="percentText" class="percent-text">--%</div>
+    </div>
+
+    <div id="statusText" class="status">正在載入...</div>
+    <div id="updateTime" class="update-time"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    const firebaseConfig = {
+      databaseURL: "https://toiletpapermonitor-1e20f-default-rtdb.asia-southeast1.firebasedatabase.app"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const database = getDatabase(app);
+    const paperRef = ref(database, 'device/paper_level');
+
+    // 圓周長 (2 * π * r) = 2 * 3.1416 * 80 ≈ 502.4
+    const circumference = 502.4;
+    let lastLevel = null;
+    let notificationPermission = Notification.permission;
+
+    // 請求通知權限
+    if (notificationPermission === "default") {
+      Notification.requestPermission().then(permission => {
+        notificationPermission = permission;
+      });
+    }
+
+    // 更新而家時間
+    function updateDateTime() {
+      const now = new Date();
+      const options = { 
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false 
+      };
+      document.getElementById('datetime').textContent = now.toLocaleString('zh-HK', options);
+    }
+    updateDateTime();
+    setInterval(updateDateTime, 1000);
+
+    // 監聽紙量
+    onValue(paperRef, (snapshot) => {
+      const level = snapshot.val();
+      const progressCircle = document.getElementById('progressCircle');
+      const percentText = document.getElementById('percentText');
+      const statusText = document.getElementById('statusText');
+      const updateTime = document.getElementById('updateTime');
+
+      if (level === null || level === undefined) {
+        percentText.textContent = "--%";
+        statusText.textContent = "尚未有數據";
+        return;
+      }
+
+      // 更新圓形進度
+      const offset = circumference - (level / 100) * circumference;
+      progressCircle.style.strokeDashoffset = offset;
+
+      // 更新文字
+      percentText.textContent = level + "%";
+
+      // 低於 20% 變紅色 + 通知
+      if (level < 20) {
+        progressCircle.classList.remove('normal');
+        progressCircle.classList.add('warning');
+        statusText.className = "status low";
+        statusText.textContent = "⚠ 紙量不足，請盡快更換";
+
+        // 只在從高於20%變成低於20%時通知一次
+        if (lastLevel !== null && lastLevel >= 20 && notificationPermission === "granted") {
+          new Notification("廁紙警告", {
+            body: `剩餘紙量只剩 ${level}%，請盡快更換！`,
+            icon: "https://cdn-icons-png.flaticon.com/512/2921/2921226.png"
+          });
+        }
+      } else {
+        progressCircle.classList.remove('warning');
+        progressCircle.classList.add('normal');
+        statusText.className = "status ok";
+        statusText.textContent = "紙量正常";
+      }
+
+      lastLevel = level;
+
+      // 更新時間
+      const now = new Date();
+      updateTime.textContent = "最後更新：" + now.toLocaleTimeString('zh-HK');
+    });
+  </script>
+</body>
+</html>
